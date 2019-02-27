@@ -115,6 +115,15 @@ class Repository(repository.AbstractRepository):
                 raise
         return _DiskRun(None, run_subunit_content)
 
+    def _get_metadata(self, run_id):
+        db = my_dbm.open(self._path('meta.dbm'), 'c')
+        try:
+            print([x for x in db])
+            metadata = db.get(str(run_id))
+        finally:
+            db.close()
+        return metadata
+
     def get_test_run(self, run_id):
         try:
             with open(os.path.join(self.base, str(run_id)), 'rb') as fp:
@@ -124,10 +133,11 @@ class Repository(repository.AbstractRepository):
                 raise KeyError("No such run.")
             else:
                 raise
-        return _DiskRun(run_id, run_subunit_content)
+        metadata = self._get_metadata(run_id)
+        return _DiskRun(run_id, run_subunit_content, metadata=metadata)
 
-    def _get_inserter(self, partial, run_id=None):
-        return _Inserter(self, partial, run_id)
+    def _get_inserter(self, partial, run_id=None, metadata=None):
+        return _Inserter(self, partial, run_id, metadata=metadata)
 
     def _get_test_times(self, test_ids):
         # May be too slow, but build and iterate.
@@ -167,15 +177,27 @@ class Repository(repository.AbstractRepository):
             stream.write('%d\n' % value)
         atomicish_rename(prefix + '.new', prefix)
 
+    def find_metadata(self, metadata):
+        run_ids = []
+        db = my_dbm.open(self._path('meta.dbm'), 'c')
+        try:
+            for run_id in db:
+                if db.get(run_id) == metadata:
+                    run_ids.append(run_id)
+        finally:
+            db.close()
+        return run_ids
+
 
 class _DiskRun(repository.AbstractTestRun):
     """A test run that was inserted into the repository."""
 
-    def __init__(self, run_id, subunit_content):
+    def __init__(self, run_id, subunit_content, metadata=None):
         """Create a _DiskRun with the content subunit_content."""
         self._run_id = run_id
         self._content = subunit_content
         assert type(subunit_content) is bytes
+        self._metadata = metadata
 
     def get_id(self):
         return self._run_id
@@ -211,14 +233,18 @@ class _DiskRun(repository.AbstractTestRun):
             case, wrap_result, methodcaller('startTestRun'),
             methodcaller('stopTestRun'))
 
+    def get_metadata(self):
+        return self._metadata
+
 
 class _SafeInserter(object):
 
-    def __init__(self, repository, partial=False, run_id=None):
+    def __init__(self, repository, partial=False, run_id=None, metadata=None):
         # XXX: Perhaps should factor into a decorator and use an unaltered
         # TestProtocolClient.
         self._repository = repository
         self._run_id = run_id
+        self._metadata = metadata
         if not self._run_id:
             fd, name = tempfile.mkstemp(dir=self._repository.base)
             self.fname = name
@@ -226,6 +252,12 @@ class _SafeInserter(object):
         else:
             self.fname = os.path.join(self._repository.base, self._run_id)
             stream = open(self.fname, 'ab')
+        if self._metadata:
+            db = my_dbm.open(self._repository._path('meta.dbm'), 'c')
+            try:
+                db[str(run_id)] = self._metadata
+            finally:
+                db.close()
         self.partial = partial
         # The time take by each test, flushed at the end.
         self._times = {}

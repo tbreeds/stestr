@@ -117,3 +117,23 @@ class TestFileRepository(base.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(repo.base, '0')))
         os.chmod(os.path.join(repo.base, '0'), 0000)
         self.assertRaises(IOError, repo.get_test_run, '0')
+
+    def test_get_metadata(self):
+        repo = self.useFixture(FileRepositoryFixture()).repo
+        result = repo.get_inserter(metadata='fun')
+        result.startTestRun()
+        result.stopTestRun()
+        run = repo.get_test_run(result.get_id())
+        self.assertEqual('fun', run.get_metadata())
+
+    def test_find_metadata(self):
+        repo = self.useFixture(FileRepositoryFixture()).repo
+        result = repo.get_inserter(metadata='fun')
+        result.startTestRun()
+        result.stopTestRun()
+        result_bad = repo.get_inserter(metadata='not_fun')
+        result_bad.startTestRun()
+        result_bad.stopTestRun()
+        run_ids = repo.find_metadata('fun')
+        self.assertIn(result.get_id(), run_ids)
+        self.assertNotIn(bad_result.get_id(), run_ids)
